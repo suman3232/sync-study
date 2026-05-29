@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    { "source": "/favicon.ico", "destination": "/favicon.svg" },
+    { "source": "/sw.js", "destination": "/sw.js" },
+    { "source": "/manifest.json", "destination": "/manifest.json" },
+    { "source": "/robots.txt", "destination": "/robots.txt" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
