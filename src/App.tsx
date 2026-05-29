@@ -107,6 +107,7 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+      <Route path="/profile" element={<Navigate to="/settings" replace />} />
       <Route
         path="/discover"
         element={
