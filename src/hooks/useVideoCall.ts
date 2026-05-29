@@ -92,13 +92,14 @@ export const useVideoCall = (roomId: string) => {
 
     pc.ontrack = (event) => {
       console.log('Received track from', peerId, event.track.kind);
+      const stream = event.streams[0] || new MediaStream([event.track]);
       setParticipants((prev) => {
         const newMap = new Map(prev);
         const existing = newMap.get(peerId);
         newMap.set(peerId, {
           id: peerId,
           name: existing?.name || 'Participant',
-          stream: event.streams[0],
+          stream,
           screenStream: existing?.screenStream,
           isMuted: existing?.isMuted || false,
           isVideoOff: existing?.isVideoOff || false,
@@ -218,6 +219,10 @@ export const useVideoCall = (roomId: string) => {
     setError(null);
 
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera and microphone access is not supported by this browser. Please use a supported browser and try again.');
+      }
+
       // Get local media
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -278,13 +283,54 @@ export const useVideoCall = (roomId: string) => {
           await channel.track({ user_id: user.id });
           setIsConnected(true);
           setIsConnecting(false);
+
+          // If others are already present in the room, send offers to them.
+          try {
+            const presenceState = channel.presenceState();
+            for (const key of Object.keys(presenceState)) {
+              if (key !== user.id) {
+                const pc = createPeerConnection(key);
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                channel.send({
+                  type: 'broadcast',
+                  event: 'signaling',
+                  payload: {
+                    type: 'offer',
+                    from: user.id,
+                    to: key,
+                    data: offer,
+                  },
+                });
+              }
+            }
+          } catch (presenceErr) {
+            console.warn('Failed to sync presence during call startup:', presenceErr);
+          }
         }
       });
 
       channelRef.current = channel;
     } catch (err) {
       console.error('Failed to start call:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start video call. Please allow camera/microphone access.');
+
+      let message = 'Failed to start video call. Please allow camera and microphone access in your browser.';
+
+      if (err instanceof Error) {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          message = 'Camera and microphone access was denied. Please allow permissions in your browser settings and reload the page.';
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          message = 'No camera or microphone was found. Please connect a device and try again.';
+        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+          message = 'Unable to access your camera or microphone. Another app may be using them.';
+        } else if (err.message) {
+          message = err.message;
+        }
+      } else if (typeof err === 'string') {
+        message = err;
+      }
+
+      setError(message);
       setIsConnecting(false);
     }
   }, [user, roomId, handleSignaling, createPeerConnection]);
@@ -412,7 +458,10 @@ export const useVideoCall = (roomId: string) => {
         // User cancelled or browser timeout - don't show error for cancellation
         if (err instanceof Error) {
           if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
-            // User cancelled the picker or timeout - silently ignore
+            return;
+          }
+          if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            setError('No screen capture device was found. Please try a different display or window.');
             return;
           }
         }
